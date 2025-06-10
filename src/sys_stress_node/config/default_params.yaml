@@ -1,0 +1,17 @@
+stress_test_node:
+  ros__parameters:
+    # CPU stress configuration
+    cpu_intensity: 0.7  # CPU load intensity (0.0 to 1.0)
+    
+    # Memory stress configuration
+    memory_target_mb: 512  # Target memory allocation in MB
+    
+    # Execution control
+    auto_start: false  # Auto-start stress test on node startup
+    duration_seconds: 0  # Duration in seconds (0 = indefinite)
+    
+    # Safety and monitoring
+    enable_safety_monitoring: true  # Enable automatic safety monitoring
+    
+    # Publishing configuration
+    publish_rate_hz: 1.0  # Rate for status and metrics publishing
