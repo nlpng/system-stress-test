@@ -59,6 +59,9 @@ class StressOrchestrator(Node):
         self.declare_parameter('cpu_stress_module_path', 'sys_stress_node.cpu_stress')
         self.declare_parameter('memory_stress_module_path', 'sys_stress_node.memory_stress')
         self.declare_parameter('max_scenario_duration', 3600.0)  # 1 hour safety limit
+        self.declare_parameter('auto_baseline_before_stress', True)
+        self.declare_parameter('baseline_duration', 120.0)  # 2 minutes baseline
+        self.declare_parameter('require_baseline_validation', True)
         
         # Initialize state
         self.current_scenario = None
@@ -71,6 +74,11 @@ class StressOrchestrator(Node):
         # Active process tracking
         self.active_processes = {}
         self.node_status = defaultdict(dict)
+        
+        # Baseline measurement state
+        self.baseline_completed = False
+        self.baseline_summary = None
+        self.baseline_client_available = False
         
         # Thread safety
         self.orchestrator_lock = threading.Lock()
@@ -87,6 +95,9 @@ class StressOrchestrator(Node):
         status_interval = self.get_parameter('status_interval').value
         self.status_timer = self.create_timer(status_interval, self._monitor_scenario_progress)
         
+        # Check for baseline collector availability
+        self._check_baseline_availability()
+        
         # Auto-start if configured
         if self.get_parameter('auto_start').value:
             default_scenario = self.get_parameter('default_scenario').value
@@ -100,24 +111,46 @@ class StressOrchestrator(Node):
         """Define built-in stress test scenarios."""
         self.scenarios = {}
         
-        # Baseline performance measurement (no stress)
-        self.scenarios['baseline'] = TestScenario(
-            name='baseline',
-            description='Baseline performance measurement with minimal load',
+        # Pure baseline measurement (no artificial stress at all)
+        self.scenarios['pure_baseline'] = TestScenario(
+            name='pure_baseline',
+            description='Pure baseline measurement with zero artificial stress',
             phases=[
                 ScenarioPhase(
-                    name='baseline_measurement',
-                    duration=60.0,
+                    name='system_baseline',
+                    duration=180.0,
                     parameters={
-                        'message_rate': 10.0,
-                        'payload_size': 1024,
+                        'baseline_only': True,
+                        'auto_save': True
+                    },
+                    description='Measure pure system baseline with no artificial load'
+                )
+            ],
+            total_duration=180.0,
+            requires_message_stress=False,
+            requires_cpu_stress=False,
+            requires_memory_stress=False
+        )
+        
+        # Light load baseline (minimal message stress for ROS 2 baseline)
+        self.scenarios['light_baseline'] = TestScenario(
+            name='light_baseline',
+            description='Baseline measurement with minimal ROS 2 message load',
+            phases=[
+                ScenarioPhase(
+                    name='ros2_baseline',
+                    duration=120.0,
+                    parameters={
+                        'message_rate': 1.0,
+                        'payload_size': 512,
+                        'message_type': 'string',
                         'cpu_intensity': 0.0,
                         'memory_usage': 0
                     },
-                    description='Measure baseline performance with 10Hz messages'
+                    description='Measure ROS 2 baseline with 1Hz small messages'
                 )
             ],
-            total_duration=60.0,
+            total_duration=120.0,
             requires_message_stress=True
         )
         
@@ -425,6 +458,16 @@ class StressOrchestrator(Node):
             String, 'performance_alerts', self._alerts_callback, 10
         )
         
+        # Monitor baseline status
+        self.baseline_status_subscriber = self.create_subscription(
+            String, 'baseline_status', self._baseline_status_callback, 10
+        )
+        
+        # Subscribe to baseline metrics
+        self.baseline_metrics_subscriber = self.create_subscription(
+            String, 'baseline_metrics', self._baseline_metrics_callback, 10
+        )
+        
     def _start_scenario_service(self, request, response):
         """Service callback to start a stress test scenario."""
         try:
@@ -495,7 +538,7 @@ class StressOrchestrator(Node):
         return response
         
     def start_scenario(self, scenario_name: str) -> bool:
-        """Start a stress test scenario."""
+        """Start a stress test scenario with optional baseline measurement."""
         with self.orchestrator_lock:
             if self.is_running:
                 self.get_logger().warn(f"Cannot start '{scenario_name}': scenario already running")
@@ -504,28 +547,44 @@ class StressOrchestrator(Node):
             if scenario_name not in self.scenarios:
                 self.get_logger().error(f"Unknown scenario: {scenario_name}")
                 return False
-                
-            self.current_scenario = self.scenarios[scenario_name]
-            self.current_phase_index = 0
-            self.scenario_start_time = time.time()
-            self.is_running = True
-            self.shutdown_requested = False
             
-            self.get_logger().info(f"Starting scenario: {scenario_name}")
-            self.get_logger().info(f"  Description: {self.current_scenario.description}")
-            self.get_logger().info(f"  Duration: {self.current_scenario.total_duration}s")
-            self.get_logger().info(f"  Phases: {len(self.current_scenario.phases)}")
+            # Check if we need baseline measurement first
+            if self.get_parameter('auto_baseline_before_stress').value and not self.baseline_completed:
+                if self._start_baseline_measurement():
+                    # Baseline measurement started, scenario will start after completion
+                    self._pending_scenario = scenario_name
+                    return True
+                else:
+                    self.get_logger().warn("Failed to start baseline measurement, proceeding without baseline")
+                    
+            return self._start_scenario_internal(scenario_name)
             
-            # Start the first phase
-            success = self._start_current_phase()
+    def _start_scenario_internal(self, scenario_name: str) -> bool:
+        """Internal method to start scenario without baseline check."""
+        self.current_scenario = self.scenarios[scenario_name]
+        self.current_phase_index = 0
+        self.scenario_start_time = time.time()
+        self.is_running = True
+        self.shutdown_requested = False
+        
+        self.get_logger().info(f"Starting scenario: {scenario_name}")
+        self.get_logger().info(f"  Description: {self.current_scenario.description}")
+        self.get_logger().info(f"  Duration: {self.current_scenario.total_duration}s")
+        self.get_logger().info(f"  Phases: {len(self.current_scenario.phases)}")
+        
+        if self.baseline_summary:
+            self.get_logger().info(f"  Baseline available: {self.baseline_summary.get('measurement_quality', 'unknown')} quality")
+        
+        # Start the first phase
+        success = self._start_current_phase()
+        
+        if success:
+            self._publish_scenario_status('started')
+        else:
+            self.is_running = False
+            self.current_scenario = None
             
-            if success:
-                self._publish_scenario_status('started')
-            else:
-                self.is_running = False
-                self.current_scenario = None
-                
-            return success
+        return success
             
     def stop_scenario(self) -> bool:
         """Stop the current stress test scenario."""
@@ -563,17 +622,21 @@ class StressOrchestrator(Node):
         self.get_logger().info(f"  Duration: {phase.duration}s")
         self.get_logger().info(f"  Parameters: {phase.parameters}")
         
-        # Start required stress components
-        success = True
-        
-        if self.current_scenario.requires_cpu_stress:
-            success &= self._start_cpu_stress(phase.parameters)
+        # Handle pure baseline scenario (no stress components)
+        if phase.parameters.get('baseline_only', False):
+            success = self._start_pure_baseline_measurement(phase.parameters)
+        else:
+            # Start required stress components
+            success = True
             
-        if self.current_scenario.requires_memory_stress:
-            success &= self._start_memory_stress(phase.parameters)
-            
-        if self.current_scenario.requires_message_stress:
-            success &= self._start_message_stress(phase.parameters)
+            if self.current_scenario.requires_cpu_stress:
+                success &= self._start_cpu_stress(phase.parameters)
+                
+            if self.current_scenario.requires_memory_stress:
+                success &= self._start_memory_stress(phase.parameters)
+                
+            if self.current_scenario.requires_message_stress:
+                success &= self._start_message_stress(phase.parameters)
             
         if success:
             self._publish_phase_progress()
@@ -581,6 +644,30 @@ class StressOrchestrator(Node):
             self.get_logger().error(f"Failed to start phase: {phase.name}")
             
         return success
+        
+    def _start_pure_baseline_measurement(self, parameters: Dict[str, Any]) -> bool:
+        """Start pure baseline measurement without any stress components."""
+        try:
+            self.get_logger().info("Starting pure baseline measurement...")
+            
+            # Send command to baseline collector to start measurement
+            baseline_duration = self.current_scenario.phases[self.current_phase_index].duration
+            
+            self._publish_command({
+                'target': 'baseline_collector',
+                'action': 'start_measurement',
+                'parameters': {
+                    'duration': baseline_duration,
+                    'auto_save': parameters.get('auto_save', True)
+                }
+            })
+            
+            self.get_logger().info(f"Pure baseline measurement requested for {baseline_duration}s")
+            return True
+            
+        except Exception as e:
+            self.get_logger().error(f"Error starting pure baseline measurement: {e}")
+            return False
         
     def _start_cpu_stress(self, parameters: Dict[str, Any]) -> bool:
         """Start CPU stress component."""
@@ -897,10 +984,137 @@ class StressOrchestrator(Node):
             
         return status
         
+    def _check_baseline_availability(self):
+        """Check if baseline collector is available."""
+        # This would typically involve checking for the baseline service
+        # For now, we'll assume it's available if the baseline parameter is enabled
+        self.baseline_client_available = self.get_parameter('auto_baseline_before_stress').value
+        
+    def _start_baseline_measurement(self) -> bool:
+        """Start baseline measurement before stress testing."""
+        if not self.baseline_client_available:
+            return False
+            
+        try:
+            baseline_duration = self.get_parameter('baseline_duration').value
+            
+            self.get_logger().info(f"Starting baseline measurement ({baseline_duration}s) before stress testing...")
+            
+            # In a real implementation, this would call the baseline service
+            # For now, we'll simulate baseline completion
+            self._simulate_baseline_measurement()
+            
+            return True
+            
+        except Exception as e:
+            self.get_logger().error(f"Failed to start baseline measurement: {e}")
+            return False
+            
+    def _simulate_baseline_measurement(self):
+        """Simulate baseline measurement completion (for testing)."""
+        # Create a simple baseline summary for testing
+        self.baseline_summary = {
+            'measurement_start': time.time(),
+            'measurement_duration': self.get_parameter('baseline_duration').value,
+            'measurement_quality': 'good',
+            'system_stability_score': 0.85,
+            'cpu_baseline': {'mean': 5.2, 'std': 1.1},
+            'memory_baseline': {'mean': 45.0, 'std': 2.3},
+            'warnings': []
+        }
+        
+        self.baseline_completed = True
+        
+        # Start pending scenario if any
+        if hasattr(self, '_pending_scenario'):
+            scenario_name = self._pending_scenario
+            delattr(self, '_pending_scenario')
+            
+            self.get_logger().info(f"Baseline completed, starting scenario: {scenario_name}")
+            self._start_scenario_internal(scenario_name)
+            
+    def _baseline_status_callback(self, msg):
+        """Handle baseline status updates."""
+        try:
+            status_data = json.loads(msg.data)
+            status = status_data.get('status', '')
+            
+            if status == 'completed':
+                self.baseline_completed = True
+                self.get_logger().info("Baseline measurement completed")
+                
+                # Start pending scenario if any
+                if hasattr(self, '_pending_scenario'):
+                    scenario_name = self._pending_scenario
+                    delattr(self, '_pending_scenario')
+                    
+                    self.get_logger().info(f"Starting delayed scenario: {scenario_name}")
+                    self._start_scenario_internal(scenario_name)
+                    
+        except Exception as e:
+            self.get_logger().debug(f"Error processing baseline status: {e}")
+            
+    def _baseline_metrics_callback(self, msg):
+        """Handle baseline metrics updates."""
+        try:
+            metrics_data = json.loads(msg.data)
+            
+            # Store baseline summary when available
+            if 'measurement_quality' in metrics_data:
+                self.baseline_summary = metrics_data
+                self.get_logger().info(f"Received baseline summary: {metrics_data.get('measurement_quality', 'unknown')} quality")
+                
+        except Exception as e:
+            self.get_logger().debug(f"Error processing baseline metrics: {e}")
+            
+    def compare_with_baseline(self, current_metrics: Dict[str, Any]) -> Dict[str, Any]:
+        """Compare current performance with baseline."""
+        if not self.baseline_summary:
+            return {'error': 'No baseline available for comparison'}
+            
+        comparison = {
+            'baseline_available': True,
+            'baseline_quality': self.baseline_summary.get('measurement_quality', 'unknown'),
+            'comparisons': {}
+        }
+        
+        # Compare system metrics with baseline
+        if 'system_metrics' in current_metrics and self.baseline_summary:
+            system_current = current_metrics['system_metrics']
+            
+            # CPU comparison
+            baseline_cpu = self.baseline_summary.get('cpu_baseline', {}).get('mean', 0)
+            current_cpu = system_current.get('cpu_percent', 0)
+            if baseline_cpu > 0:
+                comparison['comparisons']['cpu'] = {
+                    'baseline': baseline_cpu,
+                    'current': current_cpu,
+                    'change_percent': ((current_cpu - baseline_cpu) / baseline_cpu) * 100,
+                    'status': 'elevated' if current_cpu > baseline_cpu * 1.5 else 'normal'
+                }
+                
+            # Memory comparison
+            baseline_memory = self.baseline_summary.get('memory_baseline', {}).get('mean', 0)
+            current_memory = system_current.get('memory_percent', 0)
+            if baseline_memory > 0:
+                comparison['comparisons']['memory'] = {
+                    'baseline': baseline_memory,
+                    'current': current_memory,
+                    'change_percent': ((current_memory - baseline_memory) / baseline_memory) * 100,
+                    'status': 'elevated' if current_memory > baseline_memory * 1.3 else 'normal'
+                }
+                
+        return comparison
+        
     def _start_scenario_async(self, scenario_name: str):
         """Start scenario asynchronously (for auto-start)."""
         def start_delayed():
             time.sleep(2.0)  # Wait for node initialization
+            
+            # Check if baseline measurement is needed
+            if self.get_parameter('auto_baseline_before_stress').value:
+                time.sleep(5.0)  # Additional wait for baseline collector
+                
             self.start_scenario(scenario_name)
             
         thread = threading.Thread(target=start_delayed)

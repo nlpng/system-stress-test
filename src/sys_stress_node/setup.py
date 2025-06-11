@@ -29,6 +29,7 @@ setup(
             'message_stress_subscriber = sys_stress_node.message_stress_subscriber:main',
             'metrics_collector = sys_stress_node.metrics_collector:main',
             'stress_orchestrator = sys_stress_node.stress_orchestrator:main',
+            'baseline_collector = sys_stress_node.baseline_collector:main',
         ],
     },
 )

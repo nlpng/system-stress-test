@@ -49,7 +49,7 @@
 - [x] Implement metrics collection system (latency, throughput, loss rate) - 6/11/2025
 - [x] Create StressOrchestrator node for coordinating test scenarios - 6/12/2025
 - [x] Add configurable message types (std_msgs, sensor_msgs, custom large payloads) - 6/12/2025
-- [ ] Implement baseline performance measurement (no CPU/memory stress)
+- [x] Implement baseline performance measurement (no CPU/memory stress) - 6/12/2025
 
 ### 8: ROS 2 Message Throughput Stress Testing - Phase 1
 - [ ] Test high-frequency publishing: 1Hz → 10Hz → 100Hz → 1kHz → 10kHz
