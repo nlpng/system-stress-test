@@ -32,6 +32,7 @@ class CPUStressTester:
         self.processes = []
         self.is_running = False
         self.stop_event = multiprocessing.Event()
+        self._shutdown_in_progress = False
         
     def start_stress_test(self, intensity: float = 0.8, duration: Optional[float] = None) -> bool:
         """
@@ -78,20 +79,30 @@ class CPUStressTester:
         Returns:
             True if stopped successfully, False if not running
         """
-        if not self.is_running:
+        if not self.is_running or self._shutdown_in_progress:
             return False
             
+        self._shutdown_in_progress = True
         self.stop_event.set()
         self.is_running = False
         
-        # Wait for all processes to complete
+        # Wait for all processes to complete with more aggressive termination
         for process in self.processes:
-            process.join(timeout=2.0)
             if process.is_alive():
-                process.terminate()
-                process.join(timeout=1.0)
+                try:
+                    process.join(timeout=1.0)
+                    if process.is_alive():
+                        process.terminate()
+                        process.join(timeout=0.5)
+                        if process.is_alive():
+                            process.kill()
+                            process.join(timeout=0.5)
+                except (OSError, AssertionError):
+                    # Handle process cleanup errors gracefully
+                    pass
                 
         self.processes.clear()
+        self._shutdown_in_progress = False
         return True
         
     @staticmethod
@@ -104,34 +115,44 @@ class CPUStressTester:
             duration: Duration in seconds (None for indefinite)
             stop_event: Event to signal early termination
         """
-        # Calculate work and sleep times for each cycle
-        cycle_time = 0.05  # 50ms cycles for more responsive control
-        work_time = intensity * cycle_time
-        sleep_time = cycle_time - work_time
+        # Ignore signals in worker processes to prevent signal propagation issues
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         
-        end_time = time.perf_counter() + duration if duration else float('inf')
-        
-        while time.perf_counter() < end_time and not stop_event.is_set():
-            # Perform CPU-intensive work for calculated time
-            work_start = time.perf_counter()
-            while (time.perf_counter() - work_start) < work_time and not stop_event.is_set():
-                # More intensive arithmetic operations to consume CPU cycles
-                # Use a tight loop with multiple operations per iteration
-                for _ in range(1000):
-                    x = random.random()
-                    y = random.random()
-                    # Multiple mathematical operations
-                    result = math.sqrt(x) * math.pow(y, 2.5)
-                    result += math.sin(x * math.pi) * math.cos(y * math.pi)
-                    result += math.log(abs(result) + 1) * math.exp(x * 0.1)
-                    result += math.atan(result) * math.asin(min(abs(y), 1.0))
-                    # Prevent compiler optimization
-                    if result > 1e10:
-                        result = 0.0
-                
-            # Sleep for the remaining cycle time
-            if sleep_time > 0 and not stop_event.is_set():
-                time.sleep(sleep_time)
+        try:
+            # Calculate work and sleep times for each cycle
+            cycle_time = 0.05  # 50ms cycles for more responsive control
+            work_time = intensity * cycle_time
+            sleep_time = cycle_time - work_time
+            
+            end_time = time.perf_counter() + duration if duration else float('inf')
+            
+            while time.perf_counter() < end_time and not stop_event.is_set():
+                # Perform CPU-intensive work for calculated time
+                work_start = time.perf_counter()
+                while (time.perf_counter() - work_start) < work_time and not stop_event.is_set():
+                    # More intensive arithmetic operations to consume CPU cycles
+                    # Use smaller chunks for more responsive stop event checking
+                    for _ in range(100):
+                        if stop_event.is_set():
+                            return
+                        x = random.random()
+                        y = random.random()
+                        # Multiple mathematical operations
+                        result = math.sqrt(x) * math.pow(y, 2.5)
+                        result += math.sin(x * math.pi) * math.cos(y * math.pi)
+                        result += math.log(abs(result) + 1) * math.exp(x * 0.1)
+                        result += math.atan(result) * math.asin(min(abs(y), 1.0))
+                        # Prevent compiler optimization
+                        if result > 1e10:
+                            result = 0.0
+                    
+                # Sleep for the remaining cycle time
+                if sleep_time > 0 and not stop_event.is_set():
+                    time.sleep(sleep_time)
+        except (KeyboardInterrupt, SystemExit):
+            # Handle interruption gracefully
+            return
     
     def get_status(self) -> dict:
         """Get current stress test status."""
@@ -174,11 +195,21 @@ Examples:
     # Create and configure CPU stress tester
     try:
         tester = CPUStressTester(num_processes=args.processes)
+        shutdown_requested = False
         
-        # Setup graceful shutdown
+        # Setup graceful shutdown with protection against multiple calls
         def signal_handler(signum, frame):
+            nonlocal shutdown_requested
+            if shutdown_requested:
+                # Force exit if already shutting down
+                print("\nForced shutdown...")
+                sys.exit(1)
+            shutdown_requested = True
             print("\nStopping CPU stress test...")
-            tester.stop_stress_test()
+            try:
+                tester.stop_stress_test()
+            except Exception as e:
+                print(f"Error during shutdown: {e}")
             sys.exit(0)
         
         signal.signal(signal.SIGINT, signal_handler)
@@ -202,7 +233,7 @@ Examples:
         # Monitor status
         start_time = time.time()
         try:
-            while tester.is_running:
+            while tester.is_running and not shutdown_requested:
                 if args.verbose:
                     status = tester.get_status()
                     elapsed = time.time() - start_time
@@ -211,13 +242,19 @@ Examples:
                           end='', flush=True)
                 time.sleep(1.0)
             
-            if args.verbose:
+            if args.verbose and not shutdown_requested:
                 print()  # New line after status updates
-            print(f"CPU stress test completed after {time.time() - start_time:.1f} seconds")
+            if not shutdown_requested:
+                print(f"CPU stress test completed after {time.time() - start_time:.1f} seconds")
             
         except KeyboardInterrupt:
-            print("\nStopping CPU stress test...")
-            tester.stop_stress_test()
+            if not shutdown_requested:
+                shutdown_requested = True
+                print("\nStopping CPU stress test...")
+                try:
+                    tester.stop_stress_test()
+                except Exception as e:
+                    print(f"Error during shutdown: {e}")
             
     except ValueError as e:
         print(f"Error: {e}")
