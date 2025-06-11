@@ -130,12 +130,15 @@ class CPUStressTester:
             while time.perf_counter() < end_time and not stop_event.is_set():
                 # Perform CPU-intensive work for calculated time
                 work_start = time.perf_counter()
-                while (time.perf_counter() - work_start) < work_time and not stop_event.is_set():
-                    # More intensive arithmetic operations to consume CPU cycles
-                    # Use smaller chunks for more responsive stop event checking
-                    for _ in range(100):
-                        if stop_event.is_set():
-                            return
+                
+                # Do intensive computation without frequent stop checks to maintain CPU load
+                while (time.perf_counter() - work_start) < work_time:
+                    # Quick stop check every major iteration
+                    if stop_event.is_set():
+                        return
+                    
+                    # Intensive computation block - do more work per iteration
+                    for _ in range(5000):  # Increased from 100 to 5000
                         x = random.random()
                         y = random.random()
                         # Multiple mathematical operations
