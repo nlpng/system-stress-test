@@ -2,6 +2,9 @@ import threading
 import time
 import gc
 import psutil
+import argparse
+import signal
+import sys
 
 
 class MemoryStressTester:
@@ -128,3 +131,101 @@ class MemoryStressTester:
             'total_allocated_mb': self.total_allocated_mb,
             'worker_alive': self.worker_thread.is_alive() if self.worker_thread else False
         }
+
+
+def main():
+    """Standalone memory stress testing"""
+    parser = argparse.ArgumentParser(description='Memory Stress Tester')
+    parser.add_argument('--target', '-t', type=int, default=512,
+                        help='Target memory allocation in MB (default: 512)')
+    parser.add_argument('--duration', '-d', type=float, default=None,
+                        help='Duration in seconds (default: indefinite)')
+    parser.add_argument('--chunk-size', '-c', type=int, default=10,
+                        help='Allocation chunk size in MB (default: 10)')
+    parser.add_argument('--verbose', '-v', action='store_true',
+                        help='Verbose output with status updates')
+    parser.add_argument('--show-system-info', '-s', action='store_true',
+                        help='Show system memory information')
+    
+    args = parser.parse_args()
+    
+    # Validate arguments
+    if args.target <= 0:
+        print("Error: Target memory must be positive")
+        sys.exit(1)
+        
+    if args.chunk_size <= 0:
+        print("Error: Chunk size must be positive")
+        sys.exit(1)
+    
+    # Show system info if requested
+    if args.show_system_info:
+        memory = psutil.virtual_memory()
+        print(f"System Memory Information:")
+        print(f"  Total: {memory.total / (1024**3):.1f} GB")
+        print(f"  Available: {memory.available / (1024**3):.1f} GB")
+        print(f"  Used: {memory.used / (1024**3):.1f} GB ({memory.percent:.1f}%)")
+        print(f"  Free: {memory.free / (1024**3):.1f} GB")
+        print()
+    
+    # Create memory stress tester
+    tester = MemoryStressTester()
+    
+    # Setup signal handler for graceful shutdown
+    def signal_handler(signum, frame):
+        print("\nReceived shutdown signal, stopping memory stress test...")
+        tester.stop_stress_test()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Check available memory and adjust target if needed
+    available_mb = psutil.virtual_memory().available / (1024 * 1024)
+    max_safe_mb = int(available_mb * 0.8)
+    
+    if args.target > max_safe_mb:
+        print(f"Warning: Target {args.target}MB exceeds safe limit of {max_safe_mb}MB")
+        print(f"Adjusting target to {max_safe_mb}MB for safety")
+        args.target = max_safe_mb
+    
+    # Start stress test
+    print(f"Starting memory stress test:")
+    print(f"  Target: {args.target} MB")
+    print(f"  Chunk size: {args.chunk_size} MB")
+    print(f"  Duration: {args.duration if args.duration else 'Indefinite'}")
+    print("Press Ctrl+C to stop")
+    
+    success = tester.start_stress_test(args.target, args.duration)
+    
+    if not success:
+        print("Failed to start memory stress test")
+        sys.exit(1)
+    
+    # Monitor and display status
+    try:
+        start_time = time.time()
+        while tester.is_running:
+            if args.verbose:
+                status = tester.get_status()
+                memory_usage = tester.get_memory_usage()
+                elapsed = time.time() - start_time
+                
+                print(f"\rRunning: {elapsed:.1f}s | "
+                      f"Allocated: {status['total_allocated_mb']:.0f}MB | "
+                      f"Chunks: {status['allocated_chunks']} | "
+                      f"System: {memory_usage['system_memory_percent']:.1f}%", end='')
+            time.sleep(1.0)
+        
+        final_status = tester.get_status()
+        print(f"\nMemory stress test completed after {time.time() - start_time:.1f} seconds")
+        print(f"Peak allocation: {final_status['total_allocated_mb']:.0f} MB")
+        
+    except KeyboardInterrupt:
+        print("\nStopping memory stress test...")
+        tester.stop_stress_test()
+        print("Memory freed and test stopped")
+
+
+if __name__ == '__main__':
+    main()

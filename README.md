@@ -51,7 +51,52 @@ source install/setup.bash
 
 ## Usage
 
-### Basic Usage
+### Standalone Usage (Without ROS 2)
+
+The stress testing modules can be run independently without ROS 2:
+
+#### CPU Stress Testing
+```bash
+# Basic CPU stress test
+python3 src/sys_stress_node/sys_stress_node/cpu_stress.py
+
+# Custom intensity and duration
+python3 src/sys_stress_node/sys_stress_node/cpu_stress.py --intensity 0.5 --duration 30
+
+# Verbose output with custom thread count
+python3 src/sys_stress_node/sys_stress_node/cpu_stress.py -i 0.8 -t 4 -v
+```
+
+#### Memory Stress Testing
+```bash
+# Basic memory stress test
+python3 src/sys_stress_node/sys_stress_node/memory_stress.py
+
+# Custom target and duration
+python3 src/sys_stress_node/sys_stress_node/memory_stress.py --target 1024 --duration 60
+
+# Verbose output with system info
+python3 src/sys_stress_node/sys_stress_node/memory_stress.py -t 512 -v -s
+```
+
+#### Standalone Command Options
+
+**CPU Stress Options:**
+- `--intensity, -i`: CPU stress intensity (0.0 to 1.0, default: 0.8)
+- `--duration, -d`: Duration in seconds (default: indefinite)
+- `--threads, -t`: Number of threads (default: CPU count)
+- `--verbose, -v`: Verbose output with status updates
+
+**Memory Stress Options:**
+- `--target, -t`: Target memory allocation in MB (default: 512)
+- `--duration, -d`: Duration in seconds (default: indefinite)
+- `--chunk-size, -c`: Allocation chunk size in MB (default: 10)
+- `--verbose, -v`: Verbose output with status updates
+- `--show-system-info, -s`: Show system memory information
+
+### ROS 2 Usage
+
+#### Basic Usage
 
 ```bash
 # Run with default parameters
