@@ -45,7 +45,7 @@
 
 ### 7: ROS 2 Message Exchange Stress Testing - Phase 1: Core Infrastructure
 - [x] Create base MessageStressPublisher node with configurable rate/payload - 6/11/2025
-- [ ] Create base MessageStressSubscriber node with latency measurement
+- [x] Create base MessageStressSubscriber node with latency measurement - 6/11/2025
 - [ ] Implement metrics collection system (latency, throughput, loss rate)
 - [ ] Create StressOrchestrator node for coordinating test scenarios
 - [ ] Add configurable message types (std_msgs, sensor_msgs, custom large payloads)
