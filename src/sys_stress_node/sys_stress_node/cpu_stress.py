@@ -105,7 +105,7 @@ class CPUStressTester:
             stop_event: Event to signal early termination
         """
         # Calculate work and sleep times for each cycle
-        cycle_time = 0.1  # 100ms cycles for responsive control
+        cycle_time = 0.05  # 50ms cycles for more responsive control
         work_time = intensity * cycle_time
         sleep_time = cycle_time - work_time
         
@@ -115,11 +115,19 @@ class CPUStressTester:
             # Perform CPU-intensive work for calculated time
             work_start = time.perf_counter()
             while (time.perf_counter() - work_start) < work_time and not stop_event.is_set():
-                # Simple arithmetic operations to consume CPU cycles
-                math.sqrt(random.random())
-                math.pow(random.random(), 2)
-                math.sin(random.random() * math.pi)
-                math.cos(random.random() * math.pi)
+                # More intensive arithmetic operations to consume CPU cycles
+                # Use a tight loop with multiple operations per iteration
+                for _ in range(1000):
+                    x = random.random()
+                    y = random.random()
+                    # Multiple mathematical operations
+                    result = math.sqrt(x) * math.pow(y, 2.5)
+                    result += math.sin(x * math.pi) * math.cos(y * math.pi)
+                    result += math.log(abs(result) + 1) * math.exp(x * 0.1)
+                    result += math.atan(result) * math.asin(min(abs(y), 1.0))
+                    # Prevent compiler optimization
+                    if result > 1e10:
+                        result = 0.0
                 
             # Sleep for the remaining cycle time
             if sleep_time > 0 and not stop_event.is_set():
