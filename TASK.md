@@ -42,3 +42,11 @@
 - [x] Add inline code documentation
 - [x] Test final package build with colcon (deferred - ROS 2 environment not available)
 - [x] Verify all ROS 2 commands work as documented (documented in README)
+
+### Discovered During Work
+- [x] Add standalone execution capability to CPU and memory stress modules - 6/11/2025
+  - Added command-line interfaces with argparse
+  - Added signal handling for graceful shutdown
+  - Added verbose output modes with real-time status
+  - Added input validation and safety checks
+  - Updated README with standalone usage examples

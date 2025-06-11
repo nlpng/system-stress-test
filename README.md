@@ -10,6 +10,7 @@ This package provides a comprehensive system stress testing solution that can:
 - Monitor system resources in real-time
 - Automatically stop tests when safety thresholds are exceeded
 - Publish metrics and status via ROS 2 topics
+- **Run standalone without ROS 2** for simple stress testing needs
 
 ## Package Structure
 
@@ -33,20 +34,34 @@ sys_stress_node/
 
 ## Dependencies
 
+### For ROS 2 Usage:
 - ROS 2 humble
 - rclpy
 - std_msgs
 - sensor_msgs
 - python3-psutil
 
+### For Standalone Usage:
+- Python 3.6+
+- python3-psutil (install with: `pip3 install psutil`)
+
 ## Building
 
+### For ROS 2 Usage:
 ```bash
 # Build the package
 colcon build --packages-select sys_stress_node
 
 # Source the workspace
 source install/setup.bash
+```
+
+### For Standalone Usage:
+```bash
+# Install dependencies only
+pip3 install psutil
+
+# No build required - run modules directly
 ```
 
 ## Usage
@@ -77,6 +92,10 @@ python3 src/sys_stress_node/sys_stress_node/memory_stress.py --target 1024 --dur
 
 # Verbose output with system info
 python3 src/sys_stress_node/sys_stress_node/memory_stress.py -t 512 -v -s
+
+# Show help and all available options
+python3 src/sys_stress_node/sys_stress_node/cpu_stress.py --help
+python3 src/sys_stress_node/sys_stress_node/memory_stress.py --help
 ```
 
 #### Standalone Command Options
