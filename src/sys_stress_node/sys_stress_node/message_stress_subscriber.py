@@ -12,6 +12,7 @@ from rclpy.parameter import Parameter
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from std_msgs.msg import String, ByteMultiArray
 from geometry_msgs.msg import Twist
+from sensor_msgs.msg import Image, PointCloud2, LaserScan
 import time
 import json
 import csv
@@ -126,25 +127,30 @@ class MessageStressSubscriber(Node):
         bytes_callback = lambda msg, topic=topic_name: self._message_callback(msg, topic, 'bytes')
         twist_callback = lambda msg, topic=topic_name: self._message_callback(msg, topic, 'twist')
         
-        # Create subscribers for different message types
-        # In practice, you'd know the message type, but this handles multiple types
-        try:
-            string_sub = self.create_subscription(String, topic_name, string_callback, qos_profile)
-            self.subscribers[f"{topic_name}_string"] = string_sub
-        except Exception as e:
-            self.get_logger().debug(f"Could not create String subscriber for {topic_name}: {e}")
-            
-        try:
-            bytes_sub = self.create_subscription(ByteMultiArray, topic_name, bytes_callback, qos_profile)
-            self.subscribers[f"{topic_name}_bytes"] = bytes_sub
-        except Exception as e:
-            self.get_logger().debug(f"Could not create ByteMultiArray subscriber for {topic_name}: {e}")
-            
-        try:
-            twist_sub = self.create_subscription(Twist, topic_name, twist_callback, qos_profile)
-            self.subscribers[f"{topic_name}_twist"] = twist_sub
-        except Exception as e:
-            self.get_logger().debug(f"Could not create Twist subscriber for {topic_name}: {e}")
+        # Create callbacks for different message types
+        image_callback = lambda msg, topic=topic_name: self._message_callback(msg, topic, 'image')
+        pointcloud2_callback = lambda msg, topic=topic_name: self._message_callback(msg, topic, 'pointcloud2')
+        laserscan_callback = lambda msg, topic=topic_name: self._message_callback(msg, topic, 'laserscan')
+        custom_large_callback = lambda msg, topic=topic_name: self._message_callback(msg, topic, 'custom_large')
+        
+        # Create subscribers for all message types (publisher creates topic suffixes)
+        message_types = [
+            (String, f"{topic_name}_string", string_callback, 'String'),
+            (ByteMultiArray, f"{topic_name}_bytes", bytes_callback, 'ByteMultiArray'),
+            (Twist, f"{topic_name}_twist", twist_callback, 'Twist'),
+            (Image, f"{topic_name}_image", image_callback, 'Image'),
+            (PointCloud2, f"{topic_name}_pointcloud2", pointcloud2_callback, 'PointCloud2'),
+            (LaserScan, f"{topic_name}_laserscan", laserscan_callback, 'LaserScan'),
+            (ByteMultiArray, f"{topic_name}_custom_large", custom_large_callback, 'CustomLarge')
+        ]
+        
+        for msg_class, topic_suffix, callback, type_name in message_types:
+            try:
+                sub = self.create_subscription(msg_class, topic_suffix, callback, qos_profile)
+                self.subscribers[f"{topic_name}_{type_name.lower()}"] = sub
+                self.get_logger().debug(f"Created {type_name} subscriber for {topic_suffix}")
+            except Exception as e:
+                self.get_logger().debug(f"Could not create {type_name} subscriber for {topic_suffix}: {e}")
             
     def _message_callback(self, msg, topic_name: str, msg_type: str):
         """Handle incoming messages and collect metrics."""
@@ -231,6 +237,40 @@ class MessageStressSubscriber(Node):
                 payload_size = 48  # Approximate size of Twist message
                 # Sequence could be derived from linear.x if needed
                 sequence_num = int(msg.linear.x * 10)  # Reverse the encoding
+                
+            elif msg_type == 'image':
+                # Extract timestamp from header
+                if hasattr(msg, 'header') and hasattr(msg.header, 'stamp'):
+                    # Convert ROS time to nanoseconds
+                    ros_time = msg.header.stamp
+                    timestamp_ns = int(ros_time.sec * 1_000_000_000 + ros_time.nanosec)
+                payload_size = len(msg.data) if hasattr(msg, 'data') else msg.width * msg.height * (3 if msg.encoding == 'rgb8' else 1)
+                # Could extract sequence from frame_id if needed
+                
+            elif msg_type == 'pointcloud2':
+                # Extract timestamp from header
+                if hasattr(msg, 'header') and hasattr(msg.header, 'stamp'):
+                    ros_time = msg.header.stamp
+                    timestamp_ns = int(ros_time.sec * 1_000_000_000 + ros_time.nanosec)
+                payload_size = len(msg.data) if hasattr(msg, 'data') else msg.width * msg.point_step
+                
+            elif msg_type == 'laserscan':
+                # Extract timestamp from header
+                if hasattr(msg, 'header') and hasattr(msg.header, 'stamp'):
+                    ros_time = msg.header.stamp
+                    timestamp_ns = int(ros_time.sec * 1_000_000_000 + ros_time.nanosec)
+                payload_size = len(msg.ranges) * 4 + len(msg.intensities) * 4  # Approximate size
+                
+            elif msg_type == 'custom_large':
+                # Extract timestamp from first 8 bytes like bytes message
+                if len(msg.data) >= 8:
+                    timestamp_bytes = bytes(msg.data[:8])
+                    timestamp_ns = int.from_bytes(timestamp_bytes, byteorder='little')
+                    # Extract sequence from next 4 bytes
+                    if len(msg.data) >= 12:
+                        sequence_bytes = bytes(msg.data[8:12])
+                        sequence_num = int.from_bytes(sequence_bytes, byteorder='little')
+                payload_size = len(msg.data)
                 
         except Exception as e:
             self.get_logger().debug(f"Could not extract message info: {e}")
@@ -326,6 +366,16 @@ class MessageStressSubscriber(Node):
         self.get_logger().info(f"  Latency - median: {latency_stats['median']:.2f}ms, p95: {latency_stats.get('p95', 0):.2f}ms")
         self.get_logger().info(f"  Data received: {topic_metrics['total_bytes_received']} bytes")
         
+        # Log additional message type specific information
+        if 'image' in topic_name.lower():
+            self.get_logger().info(f"  Image messages: Resolution varies, encoding varies")
+        elif 'pointcloud' in topic_name.lower():
+            self.get_logger().info(f"  PointCloud2 messages: Variable point counts")
+        elif 'laser' in topic_name.lower():
+            self.get_logger().info(f"  LaserScan messages: Range data with intensities")
+        elif 'custom' in topic_name.lower():
+            self.get_logger().info(f"  Custom large messages: Structured payload data")
+        
         # Check loss rate threshold
         loss_threshold = self.get_parameter('loss_rate_threshold').value
         if loss_rate > loss_threshold * 100:
@@ -339,7 +389,7 @@ class MessageStressSubscriber(Node):
             self.csv_writer = csv.writer(self.csv_file)
             
             # Write header
-            header = ['timestamp_ns', 'topic', 'latency_ms', 'sequence_num', 'payload_size', 'message_type']
+            header = ['timestamp_ns', 'topic', 'latency_ms', 'sequence_num', 'payload_size', 'message_type', 'data_type_specific']
             self.csv_writer.writerow(header)
             self.csv_file.flush()
             

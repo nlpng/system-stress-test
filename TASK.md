@@ -47,8 +47,8 @@
 - [x] Create base MessageStressPublisher node with configurable rate/payload - 6/11/2025
 - [x] Create base MessageStressSubscriber node with latency measurement - 6/11/2025
 - [x] Implement metrics collection system (latency, throughput, loss rate) - 6/11/2025
-- [ ] Create StressOrchestrator node for coordinating test scenarios
-- [ ] Add configurable message types (std_msgs, sensor_msgs, custom large payloads)
+- [x] Create StressOrchestrator node for coordinating test scenarios - 6/12/2025
+- [x] Add configurable message types (std_msgs, sensor_msgs, custom large payloads) - 6/12/2025
 - [ ] Implement baseline performance measurement (no CPU/memory stress)
 
 ### 8: ROS 2 Message Throughput Stress Testing - Phase 1

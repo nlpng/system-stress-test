@@ -25,6 +25,10 @@ setup(
     entry_points={
         'console_scripts': [
             'stress_node = sys_stress_node.stress_node:main',
+            'message_stress_publisher = sys_stress_node.message_stress_publisher:main',
+            'message_stress_subscriber = sys_stress_node.message_stress_subscriber:main',
+            'metrics_collector = sys_stress_node.metrics_collector:main',
+            'stress_orchestrator = sys_stress_node.stress_orchestrator:main',
         ],
     },
 )
