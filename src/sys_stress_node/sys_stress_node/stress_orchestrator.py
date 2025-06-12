@@ -417,6 +417,105 @@ class StressOrchestrator(Node):
             requires_message_stress=True
         )
         
+        # Throughput stress testing scenarios
+        self.scenarios['throughput_progression'] = TestScenario(
+            name='throughput_progression',
+            description='Progressive throughput testing from 1Hz to 10kHz',
+            phases=[
+                ScenarioPhase(
+                    name='frequency_test',
+                    duration=60.0,
+                    parameters={
+                        'throughput_test': 'frequency_progression',
+                        'test_frequencies': [1, 10, 100, 1000, 10000],
+                        'test_duration': 10.0
+                    },
+                    description='Test frequency progression'
+                )
+            ],
+            total_duration=60.0,
+            requires_throughput_stress=True
+        )
+        
+        self.scenarios['sustainable_rate'] = TestScenario(
+            name='sustainable_rate',
+            description='Find maximum sustainable message rate',
+            phases=[
+                ScenarioPhase(
+                    name='rate_discovery',
+                    duration=120.0,
+                    parameters={
+                        'throughput_test': 'sustainable_rate',
+                        'loss_tolerance': 0.05
+                    },
+                    description='Binary search for max sustainable rate'
+                )
+            ],
+            total_duration=120.0,
+            requires_throughput_stress=True
+        )
+        
+        self.scenarios['queue_overflow'] = TestScenario(
+            name='queue_overflow',
+            description='Test subscriber queue overflow and recovery',
+            phases=[
+                ScenarioPhase(
+                    name='overflow_test',
+                    duration=60.0,
+                    parameters={
+                        'throughput_test': 'queue_overflow',
+                        'overflow_rate': 1000,
+                        'recovery_rate': 10
+                    },
+                    description='Test queue overflow behavior'
+                )
+            ],
+            total_duration=60.0,
+            requires_throughput_stress=True
+        )
+        
+        self.scenarios['burst_patterns'] = TestScenario(
+            name='burst_patterns',
+            description='Test burst message patterns',
+            phases=[
+                ScenarioPhase(
+                    name='burst_test',
+                    duration=90.0,
+                    parameters={
+                        'throughput_test': 'burst_pattern',
+                        'low_rate': 1,
+                        'high_rate': 1000,
+                        'cycle_duration': 5.0,
+                        'num_cycles': 3
+                    },
+                    description='Test burst rate patterns'
+                )
+            ],
+            total_duration=90.0,
+            requires_throughput_stress=True
+        )
+        
+        self.scenarios['cpu_throughput_matrix'] = TestScenario(
+            name='cpu_throughput_matrix',
+            description='Test throughput under various CPU loads',
+            phases=[
+                ScenarioPhase(
+                    name='cpu_load_test',
+                    duration=120.0,
+                    parameters={
+                        'throughput_test': 'cpu_load_throughput',
+                        'cpu_levels': [0, 25, 50, 75, 90],
+                        'test_frequency': 100,
+                        'test_duration': 10.0
+                    },
+                    description='Test throughput under CPU stress'
+                )
+            ],
+            total_duration=120.0,
+            requires_throughput_stress=True,
+            requires_cpu_stress=True
+        )
+        
     def _setup_services(self):
         """Setup ROS 2 services for orchestrator control."""
         # Scenario control services
