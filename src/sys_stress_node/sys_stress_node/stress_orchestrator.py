@@ -43,6 +43,7 @@ class TestScenario:
     requires_cpu_stress: bool = False
     requires_memory_stress: bool = False
     requires_message_stress: bool = False
+    requires_throughput_stress: bool = False
 
 
 class StressOrchestrator(Node):
@@ -567,6 +568,11 @@ class StressOrchestrator(Node):
             String, 'baseline_metrics', self._baseline_metrics_callback, 10
         )
         
+        # Subscribe to throughput test results
+        self.throughput_results_subscriber = self.create_subscription(
+            String, 'throughput_test_results', self._throughput_results_callback, 10
+        )
+        
     def _start_scenario_service(self, request, response):
         """Service callback to start a stress test scenario."""
         try:
@@ -611,7 +617,8 @@ class StressOrchestrator(Node):
                     'phases': len(scenario.phases),
                     'requires_cpu': scenario.requires_cpu_stress,
                     'requires_memory': scenario.requires_memory_stress,
-                    'requires_message': scenario.requires_message_stress
+                    'requires_message': scenario.requires_message_stress,
+                    'requires_throughput': scenario.requires_throughput_stress
                 }
             
             response.success = True
@@ -736,6 +743,9 @@ class StressOrchestrator(Node):
                 
             if self.current_scenario.requires_message_stress:
                 success &= self._start_message_stress(phase.parameters)
+                
+            if self.current_scenario.requires_throughput_stress:
+                success &= self._start_throughput_stress(phase.parameters)
             
         if success:
             self._publish_phase_progress()
@@ -874,6 +884,84 @@ class StressOrchestrator(Node):
         except Exception as e:
             self.get_logger().error(f"Error starting message stress: {e}")
             return False
+            
+    def _start_throughput_stress(self, parameters: Dict[str, Any]) -> bool:
+        """Start throughput stress testing."""
+        try:
+            throughput_test = parameters.get('throughput_test', 'frequency_progression')
+            
+            # Send command to throughput tester
+            command = {
+                'target': 'throughput_tester',
+                'action': 'start_test',
+                'test_type': throughput_test,
+                'parameters': parameters
+            }
+            
+            # Format command for specific test types
+            if throughput_test == 'frequency_progression':
+                command_data = {
+                    'command': 'start_frequency_test',
+                    'frequencies': parameters.get('test_frequencies', [1, 10, 100, 1000, 10000]),
+                    'test_duration': parameters.get('test_duration', 10.0)
+                }
+            elif throughput_test == 'sustainable_rate':
+                command_data = {
+                    'command': 'start_sustainable_rate_test',
+                    'loss_tolerance': parameters.get('loss_tolerance', 0.05)
+                }
+            elif throughput_test == 'queue_overflow':
+                command_data = {
+                    'command': 'start_queue_overflow_test',
+                    'overflow_rate': parameters.get('overflow_rate', 1000),
+                    'recovery_rate': parameters.get('recovery_rate', 10)
+                }
+            elif throughput_test == 'burst_pattern':
+                command_data = {
+                    'command': 'start_burst_test',
+                    'low_rate': parameters.get('low_rate', 1),
+                    'high_rate': parameters.get('high_rate', 1000),
+                    'cycle_duration': parameters.get('cycle_duration', 5.0),
+                    'num_cycles': parameters.get('num_cycles', 3)
+                }
+            elif throughput_test == 'cpu_load_throughput':
+                command_data = {
+                    'command': 'start_cpu_load_test',
+                    'cpu_levels': parameters.get('cpu_levels', [0, 25, 50, 75, 90]),
+                    'test_frequency': parameters.get('test_frequency', 100),
+                    'test_duration': parameters.get('test_duration', 10.0)
+                }
+            else:
+                self.get_logger().error(f"Unknown throughput test type: {throughput_test}")
+                return False
+            
+            # Publish command to throughput tester control topic
+            self._publish_throughput_command(command_data)
+            
+            self.get_logger().info(f"Started throughput test: {throughput_test}")
+            return True
+            
+        except Exception as e:
+            self.get_logger().error(f"Error starting throughput stress: {e}")
+            return False
+            
+    def _publish_throughput_command(self, command_data: Dict[str, Any]):
+        """Publish command to throughput tester control topic."""
+        try:
+            # Create a one-time publisher for throughput control
+            if not hasattr(self, '_throughput_control_pub'):
+                self._throughput_control_pub = self.create_publisher(
+                    String, 'throughput_test_control', 10
+                )
+            
+            msg = String()
+            msg.data = json.dumps(command_data)
+            self._throughput_control_pub.publish(msg)
+            
+            self.get_logger().debug(f"Published throughput command: {command_data.get('command', 'unknown')}")
+            
+        except Exception as e:
+            self.get_logger().error(f"Failed to publish throughput command: {e}")
             
     def _monitor_scenario_progress(self):
         """Monitor scenario progress and handle phase transitions."""
@@ -1165,6 +1253,43 @@ class StressOrchestrator(Node):
                 
         except Exception as e:
             self.get_logger().debug(f"Error processing baseline metrics: {e}")
+            
+    def _throughput_results_callback(self, msg):
+        """Handle throughput test results."""
+        try:
+            results_data = json.loads(msg.data)
+            test_name = results_data.get('test_name', 'unknown')
+            
+            self.get_logger().info(f"Received throughput test results: {test_name}")
+            
+            # Store results for status reporting
+            if 'throughput_results' not in self.node_status:
+                self.node_status['throughput_results'] = {}
+                
+            self.node_status['throughput_results'][test_name] = {
+                'timestamp': time.time(),
+                'results': results_data.get('results', {})
+            }
+            
+            # Log key metrics from the results
+            if 'results' in results_data:
+                results = results_data['results']
+                if test_name == 'frequency_progression':
+                    for freq, metrics in results.items():
+                        if isinstance(metrics, dict):
+                            loss_rate = metrics.get('loss_rate', 0) * 100
+                            latency = metrics.get('avg_latency', 0) * 1000  # Convert to ms
+                            self.get_logger().info(f"  {freq}Hz: {loss_rate:.1f}% loss, {latency:.2f}ms latency")
+                elif test_name == 'sustainable_rate':
+                    max_rate = results.get('max_sustainable_rate', 0)
+                    self.get_logger().info(f"  Max sustainable rate: {max_rate}Hz")
+                elif test_name == 'queue_overflow':
+                    total_loss = results.get('total_loss_rate', 0) * 100
+                    recovery_msgs = results.get('recovery_messages_received', 0)
+                    self.get_logger().info(f"  Queue overflow: {total_loss:.1f}% loss, {recovery_msgs} recovery msgs")
+            
+        except Exception as e:
+            self.get_logger().debug(f"Error processing throughput results: {e}")
             
     def compare_with_baseline(self, current_metrics: Dict[str, Any]) -> Dict[str, Any]:
         """Compare current performance with baseline."""

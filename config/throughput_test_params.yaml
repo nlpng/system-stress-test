@@ -1,0 +1,142 @@
+# Throughput Test Configuration Parameters
+# Configuration for ROS 2 message throughput stress testing
+
+# ThroughputTester Node Parameters
+throughput_tester:
+  ros__parameters:
+    # Test frequency progression configuration
+    test_frequencies: [1, 10, 100, 1000, 10000]  # Hz - frequencies to test in progression
+    test_duration: 10.0  # seconds - duration for each frequency test
+    
+    # Queue and QoS settings
+    max_queue_size: 10  # Maximum queue depth for testing overflow behavior
+    message_payload_size: 1024  # bytes - default payload size for messages
+    
+    # Burst testing configuration
+    enable_burst_testing: true
+    burst_cycle_duration: 5.0  # seconds - duration of each burst cycle phase
+    burst_low_rate: 1  # Hz - low rate in burst cycle
+    burst_high_rate: 1000  # Hz - high rate in burst cycle
+    burst_num_cycles: 3  # number of burst cycles to perform
+    
+    # CPU load testing configuration
+    cpu_load_levels: [0, 25, 50, 75, 90]  # percentage - CPU load levels to test
+    cpu_test_frequency: 100  # Hz - message frequency during CPU load tests
+    cpu_test_duration: 10.0  # seconds - duration for each CPU load level
+    
+    # Sustainable rate testing
+    sustainable_rate_min: 1  # Hz - minimum rate for binary search
+    sustainable_rate_max: 20000  # Hz - maximum rate for binary search
+    sustainable_rate_tolerance: 0.05  # 5% - maximum acceptable message loss rate
+    sustainable_rate_search_precision: 10  # Hz - stop search when range is this small
+    
+    # Queue overflow testing
+    queue_overflow_rate: 1000  # Hz - rate to cause overflow
+    queue_recovery_rate: 10  # Hz - rate during recovery testing
+    queue_overflow_duration: 10.0  # seconds - overflow test duration
+    queue_recovery_duration: 5.0  # seconds - recovery test duration
+    small_queue_size: 5  # queue size for forcing overflow
+    
+    # DDS discovery testing (for future implementation)
+    discovery_test_enabled: false
+    discovery_node_spawn_rate: 5.0  # Hz - rate of spawning/killing nodes
+    discovery_max_nodes: 50  # maximum number of nodes to spawn
+    discovery_test_duration: 60.0  # seconds
+    
+    # Results and logging configuration
+    log_detailed_results: true
+    save_results_to_file: true
+    results_file_prefix: "throughput_test_results"
+    publish_intermediate_results: true
+    intermediate_publish_interval: 1.0  # seconds
+
+# StressOrchestrator Throughput Scenarios Configuration
+stress_orchestrator:
+  ros__parameters:
+    # Throughput test scenario durations
+    throughput_progression_duration: 60.0  # seconds
+    sustainable_rate_duration: 120.0  # seconds
+    queue_overflow_duration: 60.0  # seconds
+    burst_patterns_duration: 90.0  # seconds
+    cpu_throughput_matrix_duration: 120.0  # seconds
+    
+    # Safety limits for throughput testing
+    max_throughput_test_duration: 300.0  # 5 minutes - safety limit
+    throughput_cooldown_period: 5.0  # seconds between tests
+    enable_throughput_safety_checks: true
+    
+    # Integration with other stress modules
+    enable_cpu_throughput_integration: true
+    enable_memory_throughput_integration: false  # for future phases
+    throughput_baseline_required: false
+    
+    # Monitoring and alerting
+    throughput_alert_loss_threshold: 0.10  # 10% - alert if loss rate exceeds this
+    throughput_alert_latency_threshold: 0.100  # 100ms - alert if latency exceeds this
+    throughput_monitoring_interval: 1.0  # seconds
+
+# MetricsCollector Integration
+metrics_collector:
+  ros__parameters:
+    # Throughput-specific metrics collection
+    collect_throughput_metrics: true
+    throughput_metrics_interval: 0.5  # seconds - high frequency for throughput testing
+    track_message_latency: true
+    track_message_loss_rate: true
+    track_queue_utilization: true
+    
+    # Advanced throughput metrics
+    calculate_jitter: true
+    calculate_throughput_percentiles: true
+    throughput_percentiles: [50, 90, 95, 99, 99.9]  # percentiles to calculate
+    
+    # Performance regression detection
+    enable_throughput_regression_detection: true
+    regression_detection_window: 100  # number of measurements for baseline
+    regression_alert_threshold: 0.20  # 20% degradation triggers alert
+    
+    # Storage and export
+    store_raw_throughput_data: false  # warning: can generate large amounts of data
+    export_throughput_summaries: true
+    throughput_summary_interval: 30.0  # seconds
+
+# Launch Configuration
+launch:
+  # Nodes to launch for throughput testing
+  launch_throughput_tester: true
+  launch_stress_orchestrator: true
+  launch_metrics_collector: true
+  
+  # Optional nodes (based on scenario)
+  launch_cpu_stress: false  # launched dynamically based on scenario
+  launch_memory_stress: false  # launched dynamically based on scenario
+  
+  # Node startup delays (to ensure proper initialization order)
+  metrics_collector_delay: 1.0  # seconds
+  stress_orchestrator_delay: 2.0  # seconds
+  throughput_tester_delay: 3.0  # seconds
+  
+  # Node shutdown timeouts
+  node_shutdown_timeout: 10.0  # seconds
+  force_kill_timeout: 15.0  # seconds
+
+# Test Environment Configuration
+test_environment:
+  # System requirements and recommendations
+  recommended_cpu_cores: 4
+  recommended_ram_gb: 8
+  recommended_network: "loopback"  # or "ethernet" for multi-node testing
+  
+  # ROS 2 middleware configuration hints
+  suggested_rmw_implementation: "rmw_cyclonedx_cpp"  # for best performance
+  suggested_domain_id: 42  # avoid conflicts with other ROS 2 systems
+  
+  # Performance tuning hints
+  disable_logging_during_tests: false
+  increase_message_buffer_sizes: true
+  use_zero_copy_when_available: true
+  
+  # Safety and monitoring
+  enable_system_monitoring: true
+  monitor_cpu_temperature: false  # enable if thermal throttling is a concern
+  monitor_network_utilization: false  # enable for multi-node scenarios
