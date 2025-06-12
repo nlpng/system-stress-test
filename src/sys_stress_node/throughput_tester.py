@@ -96,6 +96,8 @@ class ThroughputTester(Node):
                 self.start_sustainable_rate_test()
             elif command == 'start_queue_overflow_test':
                 self.start_queue_overflow_test()
+            elif command == 'start_discovery_overhead_test':
+                self.start_discovery_overhead_test()
             elif command == 'get_results':
                 self.publish_current_results()
             elif command == 'stop_test':
@@ -536,6 +538,160 @@ class ThroughputTester(Node):
         
         self.publish_test_results('cpu_load_throughput', cpu_load_results)
         self.get_logger().info('CPU load throughput test completed')
+    
+    def start_discovery_overhead_test(self):
+        """Test DDS discovery overhead with rapid node startup/shutdown"""
+        if self.current_test_active:
+            self.get_logger().warn('Test already active, skipping discovery overhead test')
+            return
+            
+        self.current_test_active = True
+        self.get_logger().info('Starting DDS discovery overhead test')
+        
+        # This test measures the impact of dynamic node creation/destruction on throughput
+        topic_name = 'discovery_overhead'
+        publisher, subscriber = self.create_test_topic_pair(topic_name)
+        
+        # Baseline measurement without node churn
+        self.get_logger().info('Measuring baseline throughput without node churn')
+        
+        baseline_rate = 50  # Hz - moderate rate for baseline
+        timer_period = 1.0 / baseline_rate
+        baseline_duration = 30.0  # seconds
+        
+        # Reset counters
+        with self.test_lock:
+            self.message_counters[topic_name] = {'sent': 0, 'received': 0, 'lost': 0}
+            self.latency_measurements[topic_name] = []
+        
+        # Start baseline publishing
+        baseline_timer = self.create_timer(
+            timer_period,
+            lambda: self.publish_test_message(topic_name, publisher)
+        )
+        
+        time.sleep(baseline_duration)
+        baseline_timer.destroy()
+        
+        # Collect baseline results
+        with self.test_lock:
+            baseline_sent = self.message_counters[topic_name]['sent']
+            baseline_received = self.message_counters[topic_name]['received']
+            baseline_latencies = self.latency_measurements[topic_name].copy()
+        
+        baseline_throughput = baseline_received / baseline_duration
+        baseline_latency = statistics.mean(baseline_latencies) if baseline_latencies else 0.0
+        
+        self.get_logger().info(f'Baseline: {baseline_throughput:.1f} Hz, {baseline_latency*1000:.2f}ms latency')
+        
+        # Test with node churn
+        self.get_logger().info('Testing throughput with rapid node startup/shutdown')
+        
+        # Reset counters for churn test
+        with self.test_lock:
+            self.message_counters[topic_name] = {'sent': 0, 'received': 0, 'lost': 0}
+            self.latency_measurements[topic_name] = []
+        
+        churn_duration = 60.0  # seconds
+        node_spawn_rate = 2.0  # Hz - spawn/kill nodes every 0.5 seconds
+        max_dummy_nodes = 10  # maximum number of dummy nodes to create
+        
+        # Start message publishing during churn test
+        churn_timer = self.create_timer(
+            timer_period,
+            lambda: self.publish_test_message(topic_name, publisher)
+        )
+        
+        # Simulate node churn by creating and destroying dummy publishers/subscribers
+        dummy_nodes = []
+        churn_start_time = time.time()
+        node_creation_count = 0
+        node_destruction_count = 0
+        
+        while time.time() - churn_start_time < churn_duration:
+            try:
+                # Create dummy node
+                if len(dummy_nodes) < max_dummy_nodes:
+                    dummy_topic = f'dummy_discovery_{node_creation_count}'
+                    dummy_pub = self.create_publisher(String, dummy_topic, 10)
+                    dummy_sub = self.create_subscription(String, dummy_topic, lambda msg: None, 10)
+                    dummy_nodes.append((dummy_pub, dummy_sub))
+                    node_creation_count += 1
+                    
+                # Destroy oldest dummy node
+                if dummy_nodes and len(dummy_nodes) > 2:
+                    old_pub, old_sub = dummy_nodes.pop(0)
+                    try:
+                        self.destroy_publisher(old_pub)
+                        self.destroy_subscription(old_sub)
+                        node_destruction_count += 1
+                    except Exception as e:
+                        self.get_logger().debug(f'Error destroying dummy node: {e}')
+                
+                # Wait before next churn event
+                time.sleep(1.0 / node_spawn_rate)
+                
+            except Exception as e:
+                self.get_logger().debug(f'Error in node churn: {e}')
+                break
+        
+        churn_timer.destroy()
+        
+        # Clean up remaining dummy nodes
+        for dummy_pub, dummy_sub in dummy_nodes:
+            try:
+                self.destroy_publisher(dummy_pub)
+                self.destroy_subscription(dummy_sub)
+            except Exception as e:
+                self.get_logger().debug(f'Error cleaning up dummy node: {e}')
+        
+        # Collect churn test results
+        with self.test_lock:
+            churn_sent = self.message_counters[topic_name]['sent']
+            churn_received = self.message_counters[topic_name]['received']
+            churn_latencies = self.latency_measurements[topic_name].copy()
+        
+        churn_throughput = churn_received / churn_duration
+        churn_latency = statistics.mean(churn_latencies) if churn_latencies else 0.0
+        
+        # Calculate overhead metrics
+        throughput_degradation = (baseline_throughput - churn_throughput) / baseline_throughput if baseline_throughput > 0 else 0
+        latency_increase = churn_latency - baseline_latency
+        
+        discovery_results = {
+            'baseline': {
+                'duration': baseline_duration,
+                'throughput_hz': baseline_throughput,
+                'avg_latency_ms': baseline_latency * 1000,
+                'messages_sent': baseline_sent,
+                'messages_received': baseline_received
+            },
+            'with_node_churn': {
+                'duration': churn_duration,
+                'throughput_hz': churn_throughput,
+                'avg_latency_ms': churn_latency * 1000,
+                'messages_sent': churn_sent,
+                'messages_received': churn_received,
+                'nodes_created': node_creation_count,
+                'nodes_destroyed': node_destruction_count,
+                'node_spawn_rate_hz': node_spawn_rate
+            },
+            'overhead_analysis': {
+                'throughput_degradation_percent': throughput_degradation * 100,
+                'latency_increase_ms': latency_increase * 1000,
+                'discovery_impact_score': (throughput_degradation + (latency_increase / baseline_latency if baseline_latency > 0 else 0)) / 2
+            }
+        }
+        
+        self.test_results['discovery_overhead'] = discovery_results
+        self.current_test_active = False
+        
+        self.publish_test_results('discovery_overhead', discovery_results)
+        
+        self.get_logger().info(f'Discovery overhead test completed:')
+        self.get_logger().info(f'  Throughput degradation: {throughput_degradation*100:.1f}%')
+        self.get_logger().info(f'  Latency increase: {latency_increase*1000:.2f}ms')
+        self.get_logger().info(f'  Nodes created/destroyed: {node_creation_count}/{node_destruction_count}')
     
     def publish_test_message(self, topic_name: str, publisher):
         """Publish a test message with timestamp and payload"""
